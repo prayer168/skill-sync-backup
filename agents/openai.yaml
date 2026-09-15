@@ -1,0 +1,6 @@
+interface:
+  display_name: "Skill Sync Backup"
+  short_description: "Sync GitHub skills with local Codex skills and cloud backups"
+  default_prompt: "Use $skill-sync-backup to back up or synchronize an installed Codex skill safely."
+policy:
+  allow_implicit_invocation: true
