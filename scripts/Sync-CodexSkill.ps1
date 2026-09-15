@@ -3,14 +3,20 @@ param(
 
   [string]$Repo = "",
 
-  [ValidateSet("Pull", "Push", "Backup", "BackupAll", "Status")]
+  [ValidateSet("Pull", "Push", "Backup", "BackupAll", "BackupGitHub", "Status")]
   [string]$Mode = "Pull",
 
   [string]$GitHubUser = "prayer168",
 
+  [int]$MaxGitHubRepos = 300,
+
   [string]$CodexSkillsDir = (Join-Path $env:USERPROFILE ".codex\skills"),
 
   [string[]]$BackupRoots = @(),
+
+  [switch]$SkipGitHub,
+
+  [switch]$ScanAllGitHubRepos,
 
   [switch]$Force
 )
@@ -54,7 +60,8 @@ function Assert-UnderParent {
   $fullChild = Resolve-FullPath $Child
   $fullParent = Resolve-FullPath $Parent
   $comparison = [System.StringComparison]::OrdinalIgnoreCase
-  if (-not $fullChild.StartsWith($fullParent.TrimEnd('\') + '\', $comparison)) {
+  $normalizedParent = $fullParent.TrimEnd('\')
+  if (-not ($fullChild.Equals($normalizedParent, $comparison) -or $fullChild.StartsWith($normalizedParent + '\', $comparison))) {
     throw "Refusing $Purpose outside expected directory: $fullChild"
   }
 }
@@ -74,6 +81,12 @@ function Copy-SkillContents {
     ForEach-Object {
       Copy-Item -LiteralPath $_.FullName -Destination $Destination -Recurse -Force
     }
+}
+
+function Convert-ToSafeFolderName {
+  param([Parameter(Mandatory = $true)][string]$Name)
+
+  return ($Name -replace '[\\/:*?"<>|]', '-').Trim('. ')
 }
 
 function Get-DefaultBackupRoots {
@@ -129,6 +142,133 @@ function New-SkillBackup {
   return (Resolve-FullPath $dest)
 }
 
+function Get-GitHubSkillRepositories {
+  $reposJson = & gh repo list $GitHubUser --limit $MaxGitHubRepos --json name,description,url,defaultBranchRef 2>$null
+  if ($LASTEXITCODE -ne 0 -or -not $reposJson) {
+    throw "Could not list GitHub repositories for $GitHubUser. Check gh authentication and network access."
+  }
+
+  $repos = $reposJson | ConvertFrom-Json
+  $localSkillNames = @()
+  if (Test-Path -LiteralPath $codexRoot) {
+    $localSkillNames = @(
+      Get-ChildItem -LiteralPath $codexRoot -Directory -Force |
+        Where-Object { $_.Name -ne ".git" } |
+        Select-Object -ExpandProperty Name
+    )
+  }
+
+  $candidatePattern = 'skill|codex|assessment|evaluator|kahoot|material|teaching|portal|rubric|science-fair|interactive|builder'
+  if (-not $ScanAllGitHubRepos) {
+    $repos = @(
+      $repos | Where-Object {
+        $localSkillNames -contains $_.name -or
+        $_.name -match $candidatePattern -or
+        ($_.description -and $_.description -match $candidatePattern)
+      }
+    )
+  }
+
+  $skillRepos = @()
+
+  foreach ($repo in $repos) {
+    $branch = "main"
+    if ($repo.defaultBranchRef -and $repo.defaultBranchRef.name) {
+      $branch = $repo.defaultBranchRef.name
+    }
+
+    $oldErrorActionPreference = $ErrorActionPreference
+    $ErrorActionPreference = "Continue"
+    try {
+      $treeJson = & gh api "repos/$GitHubUser/$($repo.name)/git/trees/$branch`?recursive=1" 2>$null
+      $treeExitCode = $LASTEXITCODE
+    } finally {
+      $ErrorActionPreference = $oldErrorActionPreference
+    }
+
+    if ($treeExitCode -ne 0 -or -not $treeJson) {
+      continue
+    }
+
+    $tree = $treeJson | ConvertFrom-Json
+    $skillPaths = @(
+      $tree.tree |
+        Where-Object { $_.type -eq "blob" -and (Split-Path -Leaf $_.path) -eq "SKILL.md" } |
+        Select-Object -ExpandProperty path
+    )
+
+    if ($skillPaths.Count -gt 0) {
+      $skillRepos += [PSCustomObject]@{
+        name = $repo.name
+        url = $repo.url
+        branch = $branch
+        skillPaths = $skillPaths
+      }
+    }
+  }
+
+  return $skillRepos
+}
+
+function New-GitHubSkillsBackup {
+  param([Parameter(Mandatory = $true)][string]$DatedBackupPath)
+
+  $githubDest = Join-Path $DatedBackupPath "github"
+  if (-not (Test-Path -LiteralPath $githubDest)) {
+    New-Item -ItemType Directory -Force -Path $githubDest | Out-Null
+  }
+  $fullGithubDest = Resolve-FullPath $githubDest
+
+  $skillRepos = Get-GitHubSkillRepositories
+  $copied = @()
+
+  foreach ($repo in $skillRepos) {
+    $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("skill-sync-github-" + $repo.name + "-" + [System.Guid]::NewGuid().ToString("N"))
+    New-Item -ItemType Directory -Force -Path $tempRoot | Out-Null
+
+    try {
+      $clonePath = Join-Path $tempRoot "repo"
+      Invoke-Git -Args @("clone", "--depth", "1", $repo.url, $clonePath)
+
+      foreach ($skillPath in $repo.skillPaths) {
+        $relativeSkillRoot = Split-Path -Parent $skillPath
+        if ([string]::IsNullOrWhiteSpace($relativeSkillRoot)) {
+          $source = $clonePath
+          $targetName = Convert-ToSafeFolderName -Name $repo.name
+        } else {
+          $source = Join-Path $clonePath $relativeSkillRoot
+          $targetName = Convert-ToSafeFolderName -Name ($repo.name + "--" + ($relativeSkillRoot -replace '[\\/]', '-'))
+        }
+
+        Assert-UnderParent -Child $source -Parent $clonePath -Purpose "GitHub skill backup"
+        $target = Join-Path $fullGithubDest $targetName
+        if (Test-Path -LiteralPath $target) {
+          Assert-UnderParent -Child $target -Parent $fullGithubDest -Purpose "GitHub dated backup refresh"
+          Remove-Item -LiteralPath $target -Recurse -Force
+        }
+
+        Copy-SkillContents -Source $source -Destination $target
+        $copied += [PSCustomObject]@{
+          repo = $repo.name
+          skillPath = $skillPath
+          backupFolder = $targetName
+        }
+      }
+    } finally {
+      if (Test-Path -LiteralPath $tempRoot) {
+        Assert-UnderParent -Child $tempRoot -Parent ([System.IO.Path]::GetTempPath()) -Purpose "GitHub temporary cleanup"
+        Remove-Item -LiteralPath $tempRoot -Recurse -Force
+      }
+    }
+  }
+
+  return [PSCustomObject]@{
+    backupPath = $fullGithubDest
+    skillCount = $copied.Count
+    skills = $copied
+  }
+}
+
 function New-AllSkillsBackup {
   $root = Get-BackupRoot
   $date = Get-Date -Format "yyyy-MM-dd"
@@ -154,10 +294,18 @@ function New-AllSkillsBackup {
     $copied += $skill.Name
   }
 
+  $github = $null
+  if (-not $SkipGitHub) {
+    $github = New-GitHubSkillsBackup -DatedBackupPath $fullDest
+  }
+
   return [PSCustomObject]@{
     backupPath = $fullDest
-    skillCount = $copied.Count
-    skills = $copied
+    localSkillCount = $copied.Count
+    localSkills = $copied
+    githubSkillCount = if ($github) { $github.skillCount } else { 0 }
+    githubBackupPath = if ($github) { $github.backupPath } else { $null }
+    githubSkills = if ($github) { $github.skills } else { @() }
   }
 }
 
@@ -227,8 +375,30 @@ if ($Mode -eq "BackupAll") {
     mode = $Mode
     codexSkillsDir = $codexRoot
     backupPath = $result.backupPath
-    skillCount = $result.skillCount
-    skills = $result.skills
+    localSkillCount = $result.localSkillCount
+    localSkills = $result.localSkills
+    githubSkillCount = $result.githubSkillCount
+    githubBackupPath = $result.githubBackupPath
+    githubSkills = $result.githubSkills
+  } | ConvertTo-Json -Depth 6
+  exit 0
+}
+
+if ($Mode -eq "BackupGitHub") {
+  $root = Get-BackupRoot
+  $date = Get-Date -Format "yyyy-MM-dd"
+  $dest = Join-Path $root $date
+  if (-not (Test-Path -LiteralPath $dest)) {
+    New-Item -ItemType Directory -Force -Path $dest | Out-Null
+  }
+  $fullDest = Resolve-FullPath $dest
+  $result = New-GitHubSkillsBackup -DatedBackupPath $fullDest
+  [PSCustomObject]@{
+    mode = $Mode
+    backupPath = $fullDest
+    githubSkillCount = $result.skillCount
+    githubBackupPath = $result.backupPath
+    githubSkills = $result.skills
   } | ConvertTo-Json -Depth 4
   exit 0
 }
