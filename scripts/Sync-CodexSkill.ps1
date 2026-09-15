@@ -1,11 +1,9 @@
 param(
-  [Parameter(Mandatory = $true)]
-  [ValidatePattern('^[a-z0-9][a-z0-9-]{0,62}[a-z0-9]$|^[a-z0-9]$')]
-  [string]$SkillName,
+  [string]$SkillName = "",
 
   [string]$Repo = "",
 
-  [ValidateSet("Pull", "Push", "Backup", "Status")]
+  [ValidateSet("Pull", "Push", "Backup", "BackupAll", "Status")]
   [string]$Mode = "Pull",
 
   [string]$GitHubUser = "prayer168",
@@ -22,6 +20,14 @@ $ErrorActionPreference = "Stop"
 function Resolve-FullPath {
   param([Parameter(Mandatory = $true)][string]$Path)
   $ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($Path)
+}
+
+function Assert-ValidSkillName {
+  param([Parameter(Mandatory = $true)][string]$Name)
+
+  if (-not ($Name -match '^[a-z0-9][a-z0-9-]{0,62}[a-z0-9]$|^[a-z0-9]$')) {
+    throw "Invalid skill name: $Name"
+  }
 }
 
 function Assert-UnderDirectory {
@@ -123,6 +129,38 @@ function New-SkillBackup {
   return (Resolve-FullPath $dest)
 }
 
+function New-AllSkillsBackup {
+  $root = Get-BackupRoot
+  $date = Get-Date -Format "yyyy-MM-dd"
+  $dest = Join-Path $root $date
+
+  if (-not (Test-Path -LiteralPath $dest)) {
+    New-Item -ItemType Directory -Force -Path $dest | Out-Null
+  }
+
+  $fullDest = Resolve-FullPath $dest
+  $skills = Get-ChildItem -LiteralPath $codexRoot -Directory -Force |
+    Where-Object { $_.Name -ne ".git" }
+
+  $copied = @()
+  foreach ($skill in $skills) {
+    $target = Join-Path $fullDest $skill.Name
+    if (Test-Path -LiteralPath $target) {
+      Assert-UnderParent -Child $target -Parent $fullDest -Purpose "dated backup refresh"
+      Remove-Item -LiteralPath $target -Recurse -Force
+    }
+
+    Copy-SkillContents -Source $skill.FullName -Destination $target
+    $copied += $skill.Name
+  }
+
+  return [PSCustomObject]@{
+    backupPath = $fullDest
+    skillCount = $copied.Count
+    skills = $copied
+  }
+}
+
 function Get-RepoUrl {
   if ($Repo) {
     if ($Repo -match '^(https://|git@)') {
@@ -182,6 +220,24 @@ function Test-GitRepoExists {
 }
 
 $codexRoot = Resolve-FullPath $CodexSkillsDir
+
+if ($Mode -eq "BackupAll") {
+  $result = New-AllSkillsBackup
+  [PSCustomObject]@{
+    mode = $Mode
+    codexSkillsDir = $codexRoot
+    backupPath = $result.backupPath
+    skillCount = $result.skillCount
+    skills = $result.skills
+  } | ConvertTo-Json -Depth 4
+  exit 0
+}
+
+if (-not $SkillName) {
+  throw "SkillName is required for $Mode mode. Use -Mode BackupAll to back up every installed Codex skill."
+}
+
+Assert-ValidSkillName -Name $SkillName
 $localSkillPath = Join-Path $codexRoot $SkillName
 Assert-UnderDirectory -Child $localSkillPath -Parent $codexRoot
 $repoUrl = Get-RepoUrl
