@@ -150,7 +150,8 @@ function Write-BackupReport {
     [string[]]$LocalSkills = @(),
     [object[]]$GitHubSkills = @(),
     [ValidateSet("Completed", "Partial", "Failed")][string]$Status = "Completed",
-    [string]$ErrorMessage = ""
+    [string]$ErrorMessage = "",
+    [string]$LastCompletedStep = "Backup contents recorded"
   )
 
   if (-not (Test-Path -LiteralPath $ReportDirectory)) {
@@ -164,43 +165,51 @@ function Write-BackupReport {
     $reportPath = Join-Path $fullReportDirectory "skill-backup-report_$timestamp.md"
   }
 
-  $lines = [System.Collections.Generic.List[string]]::new()
-  $lines.Add("# Skill backup report")
-  $lines.Add("")
-  $lines.Add("- Completed at: $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss zzz')")
-  $lines.Add("- Mode: $Mode")
-  $lines.Add("- Status: $Status")
-  $lines.Add("- Backup path: $BackupPath")
-  $lines.Add("- Local skill count: $($LocalSkills.Count)")
-  $lines.Add("- GitHub skill count: $($GitHubSkills.Count)")
-  $lines.Add("")
-  $lines.Add("## Local skills")
-  if ($LocalSkills.Count -eq 0) { $lines.Add("- None") }
-  foreach ($skill in $LocalSkills) { $lines.Add("- $skill") }
-  $lines.Add("")
-  $lines.Add("## GitHub skills")
-  if ($GitHubSkills.Count -eq 0) { $lines.Add("- None") }
+  $localSkillLines = if ($LocalSkills.Count -eq 0) { "- None" } else {
+    (@($LocalSkills | ForEach-Object { "- $_" }) -join "`n")
+  }
+  $githubSkillLines = [System.Collections.Generic.List[string]]::new()
   foreach ($skill in $GitHubSkills) {
     if ($skill -is [string]) {
-      $lines.Add("- $skill")
+      $githubSkillLines.Add("- $skill")
     } elseif ($skill.repo) {
-      $detail = if ($skill.skillPath) { " — $($skill.skillPath)" } else { "" }
-      $lines.Add("- $($skill.repo)$detail")
+      $detail = if ($skill.skillPath) { " ($($skill.skillPath))" } else { "" }
+      $githubSkillLines.Add("- $($skill.repo)$detail")
     } elseif ($skill.name) {
-      $lines.Add("- $($skill.name)")
+      $githubSkillLines.Add("- $($skill.name)")
     } else {
-      $lines.Add("- $skill")
+      $githubSkillLines.Add("- $skill")
     }
   }
+  if ($githubSkillLines.Count -eq 0) { $githubSkillLines.Add("- None") }
+
+  $issuesSection = ""
   if ($ErrorMessage) {
-    $lines.Add("")
-    $lines.Add("## Issues")
-    foreach ($issue in ($ErrorMessage -split "`r?`n" | Where-Object { $_ })) {
-      $lines.Add("- $issue")
-    }
+    $issueLines = @($ErrorMessage -split "`r?`n" | Where-Object { $_ } | ForEach-Object { "- $_" })
+    $issuesSection = "## Issues`n$($issueLines -join "`n")`n"
   }
 
-  Set-Content -LiteralPath $reportPath -Value $lines -Encoding UTF8
+  $templatePath = Resolve-FullPath (Join-Path $PSScriptRoot "..\templates\backup-report.md")
+  if (-not (Test-Path -LiteralPath $templatePath)) {
+    throw "Backup report template is missing: $templatePath"
+  }
+  $content = Get-Content -LiteralPath $templatePath -Raw -Encoding UTF8
+  $replacements = @{
+    "{{completed_at}}" = (Get-Date -Format "yyyy-MM-dd HH:mm:ss zzz")
+    "{{mode}}" = $Mode
+    "{{status}}" = $Status
+    "{{backup_path}}" = $BackupPath
+    "{{last_completed_step}}" = $LastCompletedStep
+    "{{local_skill_count}}" = [string]$LocalSkills.Count
+    "{{github_skill_count}}" = [string]$GitHubSkills.Count
+    "{{local_skills}}" = $localSkillLines
+    "{{github_skills}}" = ($githubSkillLines -join "`n")
+    "{{issues_section}}" = $issuesSection.TrimEnd("`r", "`n")
+  }
+  foreach ($key in $replacements.Keys) {
+    $content = $content.Replace($key, [string]$replacements[$key])
+  }
+  Set-Content -LiteralPath $reportPath -Value $content -Encoding UTF8
   return (Resolve-FullPath $reportPath)
 }
 
@@ -380,7 +389,8 @@ function New-AllSkillsBackup {
   if ($errors.Count -gt 0) { $githubCount = $githubSkills.Count }
   $status = if ($errors.Count -gt 0) { "Partial" } else { "Completed" }
   $reportPath = Write-BackupReport -Mode "BackupAll" -BackupPath $fullDest -ReportDirectory $fullDest `
-    -LocalSkills $copied -GitHubSkills $githubSkills -Status $status -ErrorMessage ($errors -join "`n")
+    -LocalSkills $copied -GitHubSkills $githubSkills -Status $status -ErrorMessage ($errors -join "`n") `
+    -LastCompletedStep $(if ($errors.Count -gt 0) { "Local skill copies completed; GitHub backup stopped" } elseif ($SkipGitHub) { "Local skill copies completed; GitHub backup skipped by option" } else { "Local and GitHub skill copies completed" })
 
   return [PSCustomObject]@{
     backupPath = $fullDest
@@ -485,12 +495,13 @@ if ($Mode -eq "BackupGitHub") {
   try {
     $result = New-GitHubSkillsBackup -DatedBackupPath $fullDest
     $reportPath = Write-BackupReport -Mode "BackupGitHub" -BackupPath $fullDest -ReportDirectory $fullDest `
-      -GitHubSkills @($result.skills)
+      -GitHubSkills @($result.skills) -LastCompletedStep "GitHub skill repositories copied into dated backup"
   } catch {
     $partialSkills = @($script:GitHubBackupProgress)
     $githubDest = Join-Path $fullDest "github"
     $reportPath = Write-BackupReport -Mode "BackupGitHub" -BackupPath $fullDest -ReportDirectory $fullDest `
-      -GitHubSkills $partialSkills -Status "Failed" -ErrorMessage $_.Exception.Message
+      -GitHubSkills $partialSkills -Status "Failed" -ErrorMessage $_.Exception.Message `
+      -LastCompletedStep "GitHub backup stopped; see issue details"
     [PSCustomObject]@{
       mode = $Mode
       backupPath = $fullDest
@@ -541,7 +552,7 @@ if (Test-Path -LiteralPath $localSkillPath) {
   $backupRoot = Split-Path -Parent $backupPath
   $reportMode = if ($Mode -eq "Backup") { $Mode } else { "SafetyBackupBefore$Mode" }
   $reportPath = Write-BackupReport -Mode $reportMode -BackupPath $backupPath -ReportDirectory (Join-Path $backupRoot "reports") `
-    -LocalSkills @($SkillName) -Status "Completed"
+    -LocalSkills @($SkillName) -Status "Completed" -LastCompletedStep "Local skill backup copied successfully"
 }
 
 if ($Mode -eq "Backup") {
