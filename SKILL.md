@@ -3,9 +3,11 @@ name: skill-sync-backup
 description: >-
   Synchronize Codex skills installed on this computer with the user's GitHub skill repositories,
   search the user's GitHub account for skill repositories, and back up both installed and
-  GitHub-hosted skills into the user's Google Drive backup folder. Use when the user asks to
-  sync, update, pull, push, compare, or back up Codex skills, including broad requests like
-  "備份技能".
+  GitHub-hosted skills into the user's Google Drive backup folder. Also use whenever creating,
+  editing, installing, pulling, publishing, or otherwise updating a locally maintained Codex skill,
+  so the GitHub repo, Black Bear digital teaching portal skill listing, and installed local copy
+  are synchronized together. Use for requests to sync, update, pull, push, compare, or back up
+  Codex skills, including broad requests like "備份技能".
 ---
 
 # Skill Sync Backup
