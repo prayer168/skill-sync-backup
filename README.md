@@ -1,7 +1,9 @@
 # Skill Sync Backup
 
-**Version:** 1.0.0  
-**Codex skill directory:** `C:\Users\NNKIEH\.codex\skills\skill-sync-backup`  
+**Version:** 1.1.0
+
+**Codex skill directory:** `C:\Users\NNKIEH\.codex\skills\skill-sync-backup`
+
 **GitHub:** [prayer168/skill-sync-backup](https://github.com/prayer168/skill-sync-backup)
 
 Synchronize locally installed Codex skills with GitHub repositories and create dated backups in the configured Google Drive backup folder. For maintained skills, its workflow also keeps the GitHub source, the Black Bear digital teaching portal's **skill** listing, and the installed local copy aligned.
@@ -33,7 +35,7 @@ These commands respectively back up installed and GitHub skills, back up GitHub-
 
 ## Backup reports
 
-Every backup run—including the automatic safety backup before `Pull` or `Push`—produces a Markdown overall report named `skill-backup-report_YYYY-MM-DD-HHmmss.md`. Bulk reports are stored in that day's backup folder; single-skill safety reports are stored under `<backup-root>\reports`. Reports include status, backup path, local and GitHub skill counts and names, last completed step, and any errors. A partial or failed operation must not be described as complete.
+Every backup run—including the automatic safety backup before `Pull` or `Push`—produces a Markdown overall report in Traditional Chinese named `skill-backup-report_YYYY-MM-DD-HHmmss.md`. Bulk reports are stored in that day's backup folder; single-skill safety reports are stored under `<backup-root>\reports`. Each report explicitly gives its folder and filename and lists all backed-up skills, separating installed local skills from GitHub skills (`無` when a list is empty). It also includes status, backup path, counts, last completed step, and errors. A partial or failed operation must not be described as complete. The final response must likewise give the report folder, filename, and skill list in Chinese.
 
 ## Publishing a skill update
 

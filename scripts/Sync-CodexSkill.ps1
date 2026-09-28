@@ -164,8 +164,9 @@ function Write-BackupReport {
     $timestamp = Get-Date -Format "yyyy-MM-dd-HHmmss-fff"
     $reportPath = Join-Path $fullReportDirectory "skill-backup-report_$timestamp.md"
   }
+  $reportFileName = Split-Path -Leaf $reportPath
 
-  $localSkillLines = if ($LocalSkills.Count -eq 0) { "- None" } else {
+  $localSkillLines = if ($LocalSkills.Count -eq 0) { "- $([char]0x7121)" } else {
     (@($LocalSkills | ForEach-Object { "- $_" }) -join "`n")
   }
   $githubSkillLines = [System.Collections.Generic.List[string]]::new()
@@ -181,7 +182,31 @@ function Write-BackupReport {
       $githubSkillLines.Add("- $skill")
     }
   }
-  if ($githubSkillLines.Count -eq 0) { $githubSkillLines.Add("- None") }
+  if ($githubSkillLines.Count -eq 0) { $githubSkillLines.Add("- $([char]0x7121)") }
+  $modeTranslations = @{
+    'Backup' = [char]0x55ae + [char]0x4e00 + [char]0x6280 + [char]0x80fd + [char]0x5099 + [char]0x4efd
+    'BackupAll' = [char]0x5168 + [char]0x90e8 + [char]0x6280 + [char]0x80fd + [char]0x5099 + [char]0x4efd
+    'BackupGitHub' = [char]0x50c5 + [char]0x5099 + [char]0x4efd + [char]0x20 + [char]0x47 + [char]0x69 + [char]0x74 + [char]0x48 + [char]0x75 + [char]0x62 + [char]0x20 + [char]0x6280 + [char]0x80fd
+    'SafetyBackupBeforePush' = [char]0x63a8 + [char]0x9001 + [char]0x524d + [char]0x5b89 + [char]0x5168 + [char]0x5099 + [char]0x4efd
+    'SafetyBackupBeforePull' = [char]0x62c9 + [char]0x53d6 + [char]0x524d + [char]0x5b89 + [char]0x5168 + [char]0x5099 + [char]0x4efd
+  }
+  $statusTranslations = @{
+    'Completed' = [char]0x5df2 + [char]0x5b8c + [char]0x6210
+    'Partial' = [char]0x90e8 + [char]0x5206 + [char]0x5b8c + [char]0x6210
+    'Failed' = [char]0x5931 + [char]0x6557
+  }
+  $lastStepTranslations = @{
+    'Local skill copies completed; GitHub backup stopped' = [char]0x672c + [char]0x5730 + [char]0x6280 + [char]0x80fd + [char]0x5df2 + [char]0x5b8c + [char]0x6210 + [char]0x5099 + [char]0x4efd + [char]0xff1b + [char]0x47 + [char]0x69 + [char]0x74 + [char]0x48 + [char]0x75 + [char]0x62 + [char]0x20 + [char]0x5099 + [char]0x4efd + [char]0x4e2d + [char]0x6b62
+    'Local skill copies completed; GitHub backup skipped by option' = [char]0x672c + [char]0x5730 + [char]0x6280 + [char]0x80fd + [char]0x5df2 + [char]0x5b8c + [char]0x6210 + [char]0x5099 + [char]0x4efd + [char]0xff1b + [char]0x4f9d + [char]0x8a2d + [char]0x5b9a + [char]0x7565 + [char]0x904e + [char]0x20 + [char]0x47 + [char]0x69 + [char]0x74 + [char]0x48 + [char]0x75 + [char]0x62 + [char]0x20 + [char]0x5099 + [char]0x4efd
+    'Local and GitHub skill copies completed' = [char]0x672c + [char]0x5730 + [char]0x8207 + [char]0x20 + [char]0x47 + [char]0x69 + [char]0x74 + [char]0x48 + [char]0x75 + [char]0x62 + [char]0x20 + [char]0x6280 + [char]0x80fd + [char]0x5747 + [char]0x5df2 + [char]0x5b8c + [char]0x6210 + [char]0x5099 + [char]0x4efd
+    'GitHub skill repositories copied into dated backup' = [char]0x47 + [char]0x69 + [char]0x74 + [char]0x48 + [char]0x75 + [char]0x62 + [char]0x20 + [char]0x6280 + [char]0x80fd + [char]0x5132 + [char]0x5b58 + [char]0x5eab + [char]0x5df2 + [char]0x8907 + [char]0x88fd + [char]0x81f3 + [char]0x65e5 + [char]0x671f + [char]0x5099 + [char]0x4efd + [char]0x8cc7 + [char]0x6599 + [char]0x593e
+    'GitHub backup stopped; see issue details' = [char]0x47 + [char]0x69 + [char]0x74 + [char]0x48 + [char]0x75 + [char]0x62 + [char]0x20 + [char]0x5099 + [char]0x4efd + [char]0x4e2d + [char]0x6b62 + [char]0xff1b + [char]0x8acb + [char]0x53c3 + [char]0x95b1 + [char]0x554f + [char]0x984c + [char]0x8207 + [char]0x932f + [char]0x8aa4
+    'Local skill backup copied successfully' = [char]0x672c + [char]0x5730 + [char]0x6280 + [char]0x80fd + [char]0x5df2 + [char]0x6210 + [char]0x529f + [char]0x8907 + [char]0x88fd + [char]0x5099 + [char]0x4efd
+    'Backup contents recorded' = [char]0x5df2 + [char]0x8a18 + [char]0x9304 + [char]0x5099 + [char]0x4efd + [char]0x5167 + [char]0x5bb9
+  }
+  $modeLabel = if ($modeTranslations.ContainsKey($Mode)) { $modeTranslations[$Mode] } else { $Mode }
+  $statusLabel = if ($statusTranslations.ContainsKey($Status)) { $statusTranslations[$Status] } else { $Status }
+  $lastStepLabel = if ($lastStepTranslations.ContainsKey($LastCompletedStep)) { $lastStepTranslations[$LastCompletedStep] } else { $LastCompletedStep }
 
   $issuesSection = ""
   if ($ErrorMessage) {
@@ -196,10 +221,12 @@ function Write-BackupReport {
   $content = Get-Content -LiteralPath $templatePath -Raw -Encoding UTF8
   $replacements = @{
     "{{completed_at}}" = (Get-Date -Format "yyyy-MM-dd HH:mm:ss zzz")
-    "{{mode}}" = $Mode
-    "{{status}}" = $Status
+    "{{report_directory}}" = $fullReportDirectory
+    "{{report_filename}}" = $reportFileName
+    "{{mode}}" = $modeLabel
+    "{{status}}" = $statusLabel
     "{{backup_path}}" = $BackupPath
-    "{{last_completed_step}}" = $LastCompletedStep
+    "{{last_completed_step}}" = $lastStepLabel
     "{{local_skill_count}}" = [string]$LocalSkills.Count
     "{{github_skill_count}}" = [string]$GitHubSkills.Count
     "{{local_skills}}" = $localSkillLines

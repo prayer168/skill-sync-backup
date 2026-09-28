@@ -1,6 +1,6 @@
 ---
 name: skill-sync-backup
-version: 1.0.0
+version: 1.1.0
 description: >-
   Synchronize Codex skills installed on this computer with the user's GitHub skill repositories,
   search the user's GitHub account for skill repositories, and back up both installed and
@@ -83,6 +83,12 @@ public portal.
   `skill-backup-report_YYYY-MM-DD-HHmmss.md`; bulk reports live in that dated backup folder and
   single-skill safety reports live under `<backup-root>\reports`. The report format is maintained
   in `templates/backup-report.md` and populated by `scripts/Sync-CodexSkill.ps1`.
+- Write every overall report in Traditional Chinese. Explicitly state (1) the folder containing
+  the report, (2) the report filename, and (3) the backed-up skill list, separated into installed
+  local skills and GitHub skills. Preserve counts, mode, status, backup destination, last completed
+  step, and errors. When a category has no skills, say `無` rather than omitting it. In the final
+  response, repeat the report folder and filename and list the backed-up skills so the user can
+  quickly locate and understand the report.
 - Default GitHub owner is `prayer168` unless the user gives another owner or full repo URL.
 
 ## Standard Workflow
@@ -108,7 +114,7 @@ Before mutating either side:
 - GitHub discovery uses `gh repo list <owner>` plus default-branch tree inspection for `SKILL.md`. Clone only repos confirmed to contain a skill file. Prefer the default fast candidate search; use `-ScanAllGitHubRepos` for exhaustive but slower discovery.
 - Never bypass `-Force` for `Push`; it is the human checkpoint that confirms the installed Codex copy should overwrite GitHub content.
 - If backup creation, repo reachability, clone, validation, copy, commit, or push fails, stop with the backup path and last completed step. Do not retry destructive copy operations with a different inferred path.
-- Every backup command must render `templates/backup-report.md` and leave a report even when GitHub discovery or copying fails. The report records completion time, mode, status (`Completed`, `Partial`, or `Failed`), backup path, local and GitHub skill counts and names, and errors. For a partial backup, list everything copied before the failure and identify the last completed step. Never report a failed or partial backup as complete.
+- Every backup command must render `templates/backup-report.md` in Traditional Chinese and leave a report even when GitHub discovery or copying fails. The report must name its containing folder and filename, and explicitly list every backed-up skill split between local and GitHub sources (use `無` for an empty list). It also records completion time, mode, status (`Completed`, `Partial`, or `Failed`), backup path, counts, last completed step, and errors. For a partial backup, list everything copied before the failure and identify the last completed step. Never report a failed or partial backup as complete.
 - After any `Pull` or `Push`, run the skill validator on the installed skill or remote copy when available, and report validation results separately from sync completion.
 
 Common commands:
@@ -152,5 +158,6 @@ After a run, report:
 - whether validation passed
 - any files left unchanged because the script stopped safely
 - overall backup report path, status, local and GitHub skill counts, and any incomplete items
+- in Chinese, the overall report folder, filename, and complete backed-up skill list (local and GitHub separated)
 - for a skill update, separate completion status for GitHub skill repo, portal `skill` listing,
   installed local skill, and local portal copy
