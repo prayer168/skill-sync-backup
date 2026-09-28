@@ -77,6 +77,10 @@ public portal.
 - Single-skill safety backups used before `Pull` or `Push` keep the older naming pattern:
   `<skill-name>,YYYY-MM-DD`. If today's single-skill backup already exists, append the time:
   `<skill-name>,YYYY-MM-DD-HHmmss`.
+- Every backup operation must create a Markdown overall report, including full, GitHub-only,
+  single-skill, and automatic pre-sync safety backups. The report is named
+  `skill-backup-report_YYYY-MM-DD-HHmmss.md`; bulk reports live in that dated backup folder and
+  single-skill safety reports live under `<backup-root>\reports`.
 - Default GitHub owner is `prayer168` unless the user gives another owner or full repo URL.
 
 ## Standard Workflow
@@ -102,6 +106,7 @@ Before mutating either side:
 - GitHub discovery uses `gh repo list <owner>` plus default-branch tree inspection for `SKILL.md`. Clone only repos confirmed to contain a skill file. Prefer the default fast candidate search; use `-ScanAllGitHubRepos` for exhaustive but slower discovery.
 - Never bypass `-Force` for `Push`; it is the human checkpoint that confirms the installed Codex copy should overwrite GitHub content.
 - If backup creation, repo reachability, clone, validation, copy, commit, or push fails, stop with the backup path and last completed step. Do not retry destructive copy operations with a different inferred path.
+- Every backup command must leave a report even when GitHub discovery or copying fails. The report records completion time, mode, status (`Completed`, `Partial`, or `Failed`), backup path, local and GitHub skill counts and names, and errors. For a partial backup, list everything copied before the failure and identify the last completed step. Never report a failed or partial backup as complete.
 - After any `Pull` or `Push`, run the skill validator on the installed skill or remote copy when available, and report validation results separately from sync completion.
 
 Common commands:
@@ -144,5 +149,6 @@ After a run, report:
 - sync direction
 - whether validation passed
 - any files left unchanged because the script stopped safely
+- overall backup report path, status, local and GitHub skill counts, and any incomplete items
 - for a skill update, separate completion status for GitHub skill repo, portal `skill` listing,
   installed local skill, and local portal copy

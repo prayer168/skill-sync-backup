@@ -142,6 +142,68 @@ function New-SkillBackup {
   return (Resolve-FullPath $dest)
 }
 
+function Write-BackupReport {
+  param(
+    [Parameter(Mandatory = $true)][string]$Mode,
+    [Parameter(Mandatory = $true)][string]$BackupPath,
+    [Parameter(Mandatory = $true)][string]$ReportDirectory,
+    [string[]]$LocalSkills = @(),
+    [object[]]$GitHubSkills = @(),
+    [ValidateSet("Completed", "Partial", "Failed")][string]$Status = "Completed",
+    [string]$ErrorMessage = ""
+  )
+
+  if (-not (Test-Path -LiteralPath $ReportDirectory)) {
+    New-Item -ItemType Directory -Force -Path $ReportDirectory | Out-Null
+  }
+  $fullReportDirectory = Resolve-FullPath $ReportDirectory
+  $timestamp = Get-Date -Format "yyyy-MM-dd-HHmmss"
+  $reportPath = Join-Path $fullReportDirectory "skill-backup-report_$timestamp.md"
+  if (Test-Path -LiteralPath $reportPath) {
+    $timestamp = Get-Date -Format "yyyy-MM-dd-HHmmss-fff"
+    $reportPath = Join-Path $fullReportDirectory "skill-backup-report_$timestamp.md"
+  }
+
+  $lines = [System.Collections.Generic.List[string]]::new()
+  $lines.Add("# Skill backup report")
+  $lines.Add("")
+  $lines.Add("- Completed at: $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss zzz')")
+  $lines.Add("- Mode: $Mode")
+  $lines.Add("- Status: $Status")
+  $lines.Add("- Backup path: $BackupPath")
+  $lines.Add("- Local skill count: $($LocalSkills.Count)")
+  $lines.Add("- GitHub skill count: $($GitHubSkills.Count)")
+  $lines.Add("")
+  $lines.Add("## Local skills")
+  if ($LocalSkills.Count -eq 0) { $lines.Add("- None") }
+  foreach ($skill in $LocalSkills) { $lines.Add("- $skill") }
+  $lines.Add("")
+  $lines.Add("## GitHub skills")
+  if ($GitHubSkills.Count -eq 0) { $lines.Add("- None") }
+  foreach ($skill in $GitHubSkills) {
+    if ($skill -is [string]) {
+      $lines.Add("- $skill")
+    } elseif ($skill.repo) {
+      $detail = if ($skill.skillPath) { " — $($skill.skillPath)" } else { "" }
+      $lines.Add("- $($skill.repo)$detail")
+    } elseif ($skill.name) {
+      $lines.Add("- $($skill.name)")
+    } else {
+      $lines.Add("- $skill")
+    }
+  }
+  if ($ErrorMessage) {
+    $lines.Add("")
+    $lines.Add("## Issues")
+    foreach ($issue in ($ErrorMessage -split "`r?`n" | Where-Object { $_ })) {
+      $lines.Add("- $issue")
+    }
+  }
+
+  Set-Content -LiteralPath $reportPath -Value $lines -Encoding UTF8
+  return (Resolve-FullPath $reportPath)
+}
+
 function Get-GitHubSkillRepositories {
   $reposJson = & gh repo list $GitHubUser --limit $MaxGitHubRepos --json name,description,url,defaultBranchRef 2>$null
   if ($LASTEXITCODE -ne 0 -or -not $reposJson) {
@@ -219,6 +281,7 @@ function New-GitHubSkillsBackup {
   }
   $fullGithubDest = Resolve-FullPath $githubDest
 
+  $script:GitHubBackupProgress = @()
   $skillRepos = Get-GitHubSkillRepositories
   $copied = @()
 
@@ -249,6 +312,11 @@ function New-GitHubSkillsBackup {
 
         Copy-SkillContents -Source $source -Destination $target
         $copied += [PSCustomObject]@{
+          repo = $repo.name
+          skillPath = $skillPath
+          backupFolder = $targetName
+        }
+        $script:GitHubBackupProgress += [PSCustomObject]@{
           repo = $repo.name
           skillPath = $skillPath
           backupFolder = $targetName
@@ -295,17 +363,35 @@ function New-AllSkillsBackup {
   }
 
   $github = $null
+  $errors = @()
   if (-not $SkipGitHub) {
-    $github = New-GitHubSkillsBackup -DatedBackupPath $fullDest
+    try {
+      $github = New-GitHubSkillsBackup -DatedBackupPath $fullDest
+    } catch {
+      $errors += $_.Exception.Message
+    }
   }
+
+  $githubSkills = if ($github) { @($github.skills) } else { @() }
+  if ($errors.Count -gt 0) {
+    $githubSkills = @($script:GitHubBackupProgress)
+  }
+  $githubCount = if ($github) { $github.skillCount } else { 0 }
+  if ($errors.Count -gt 0) { $githubCount = $githubSkills.Count }
+  $status = if ($errors.Count -gt 0) { "Partial" } else { "Completed" }
+  $reportPath = Write-BackupReport -Mode "BackupAll" -BackupPath $fullDest -ReportDirectory $fullDest `
+    -LocalSkills $copied -GitHubSkills $githubSkills -Status $status -ErrorMessage ($errors -join "`n")
 
   return [PSCustomObject]@{
     backupPath = $fullDest
+    reportPath = $reportPath
+    status = $status
+    errors = $errors
     localSkillCount = $copied.Count
     localSkills = $copied
-    githubSkillCount = if ($github) { $github.skillCount } else { 0 }
+    githubSkillCount = $githubCount
     githubBackupPath = if ($github) { $github.backupPath } else { $null }
-    githubSkills = if ($github) { $github.skills } else { @() }
+    githubSkills = $githubSkills
   }
 }
 
@@ -380,7 +466,11 @@ if ($Mode -eq "BackupAll") {
     githubSkillCount = $result.githubSkillCount
     githubBackupPath = $result.githubBackupPath
     githubSkills = $result.githubSkills
+    reportPath = $result.reportPath
+    status = $result.status
+    errors = $result.errors
   } | ConvertTo-Json -Depth 6
+  if ($result.errors.Count -gt 0) { exit 1 }
   exit 0
 }
 
@@ -392,13 +482,35 @@ if ($Mode -eq "BackupGitHub") {
     New-Item -ItemType Directory -Force -Path $dest | Out-Null
   }
   $fullDest = Resolve-FullPath $dest
-  $result = New-GitHubSkillsBackup -DatedBackupPath $fullDest
+  try {
+    $result = New-GitHubSkillsBackup -DatedBackupPath $fullDest
+    $reportPath = Write-BackupReport -Mode "BackupGitHub" -BackupPath $fullDest -ReportDirectory $fullDest `
+      -GitHubSkills @($result.skills)
+  } catch {
+    $partialSkills = @($script:GitHubBackupProgress)
+    $githubDest = Join-Path $fullDest "github"
+    $reportPath = Write-BackupReport -Mode "BackupGitHub" -BackupPath $fullDest -ReportDirectory $fullDest `
+      -GitHubSkills $partialSkills -Status "Failed" -ErrorMessage $_.Exception.Message
+    [PSCustomObject]@{
+      mode = $Mode
+      backupPath = $fullDest
+      githubSkillCount = $partialSkills.Count
+      githubBackupPath = $githubDest
+      githubSkills = $partialSkills
+      reportPath = $reportPath
+      status = "Failed"
+      error = $_.Exception.Message
+    } | ConvertTo-Json -Depth 4
+    exit 1
+  }
   [PSCustomObject]@{
     mode = $Mode
     backupPath = $fullDest
     githubSkillCount = $result.skillCount
     githubBackupPath = $result.backupPath
     githubSkills = $result.skills
+    reportPath = $reportPath
+    status = "Completed"
   } | ConvertTo-Json -Depth 4
   exit 0
 }
@@ -426,6 +538,10 @@ if ($Mode -eq "Status") {
 $backupPath = $null
 if (Test-Path -LiteralPath $localSkillPath) {
   $backupPath = New-SkillBackup -LocalSkillPath $localSkillPath
+  $backupRoot = Split-Path -Parent $backupPath
+  $reportMode = if ($Mode -eq "Backup") { $Mode } else { "SafetyBackupBefore$Mode" }
+  $reportPath = Write-BackupReport -Mode $reportMode -BackupPath $backupPath -ReportDirectory (Join-Path $backupRoot "reports") `
+    -LocalSkills @($SkillName) -Status "Completed"
 }
 
 if ($Mode -eq "Backup") {
@@ -434,6 +550,8 @@ if ($Mode -eq "Backup") {
     skillName = $SkillName
     localSkillPath = $localSkillPath
     backupPath = $backupPath
+    reportPath = $reportPath
+    status = "Completed"
   } | ConvertTo-Json -Depth 3
   exit 0
 }
