@@ -590,6 +590,7 @@ try {
       repoUrl = $repoUrl
       localSkillPath = (Resolve-FullPath $localSkillPath)
       backupPath = $backupPath
+      reportPath = $reportPath
       remoteSkillRoot = $remoteSkillRoot
     } | ConvertTo-Json -Depth 4
     exit 0
@@ -627,6 +628,7 @@ try {
       repoUrl = $repoUrl
       localSkillPath = $localSkillPath
       backupPath = $backupPath
+      reportPath = $reportPath
       pushedChanges = [bool]$status
     } | ConvertTo-Json -Depth 4
     exit 0
