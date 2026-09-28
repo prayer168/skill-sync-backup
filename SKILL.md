@@ -12,6 +12,53 @@ description: >-
 
 Keep the user's GitHub skill repositories, installed Codex skills, and local cloud-drive backups aligned.
 
+## Required Three-Way Publish Workflow
+
+Whenever a locally maintained Codex skill is created, updated, pulled, or pushed, complete this
+workflow as part of the same task. Treat the skill's own GitHub repository as the source of truth
+after the skill change is ready. The three destinations are the GitHub skill repo, the `skill`
+category on the Black Bear digital teaching portal, and the installed local skill folder.
+
+1. **Identify and protect the source.** Resolve the skill directory and its GitHub repo from the
+   skill's configured repo URL, its Git remote, or an exact `prayer168/<skill-name>` repo. Verify
+   the repo and default branch before writing. If multiple candidates exist or the skill is not
+   locally maintained, stop and report the ambiguity. Before replacing or publishing content,
+   create the dated local safety backup using this skill's script. Keep unrelated files and user
+   changes intact.
+2. **Publish the skill repo.** For a requested local-to-GitHub update, use this skill's protected
+   `Push` workflow (`-Force` is required by the script), inspect the diff, and push only the target
+   skill. If GitHub has newer commits, fetch and integrate them without discarding either side;
+   stop on unresolved conflicts. For a GitHub-to-local update, pull the verified remote version
+   first, then continue with the portal and local-copy steps below.
+3. **Update the portal skill listing.** Use the `science-portal-update-codex` workflow and edit
+   `prayer168/science-portal` from a fresh clone. In `STATIC_SKILL_REPORTS`, update the existing
+   entry for this skill's repo URL or add one if absent. Do not create duplicates. Use a readable
+   Traditional Chinese title and stable emoji. If the entry name changes, update
+   `MATERIAL_ICON_MAP` as needed. Do not modify Firestore directly. Preserve concurrent portal
+   commits by fetching and integrating before push.
+4. **Deploy and verify the portal.** Preview the changed `skill` category locally. Commit and push
+   only the intended portal file, then verify the live GitHub Pages page with a cache-busting URL;
+   confirm the title and repo link appear exactly once. A successful `git push` alone does not
+   count as deployment verification.
+5. **Refresh the installed local skill.** Once the GitHub skill repo is confirmed current, sync its
+   contents back to `C:\Users\NNKIEH\.codex\skills\<skill-name>` while preserving required local
+   configuration and checking for local-only changes. For this skill itself, compare the pushed
+   repo with the local folder and refresh the local copy only after confirming the contents match.
+6. **Sync the local portal copy.** After the live page is verified, back up the previous local
+   `science-portal\index.html` once for today's date, then copy the deployed repo version to the
+   local Google Drive portal folder. Never copy the stale local portal file over GitHub.
+7. **Report completion per destination.** Give the skill repo URL and commit, portal commit and
+   live verification, local skill path, local portal path and dated backup path. Mark any failed
+   destination incomplete and state the last successful step.
+
+This workflow applies to locally maintained skills under the user's Codex skills directory. Do
+not publish bundled vendor/plugin skills or private/system skills as if they were user-authored.
+If there is no verified GitHub repo, a repo would need to be created, or a local/remote conflict
+cannot be reconciled safely, complete the non-dependent checks and ask for the missing repo or
+source choice before publishing. For bulk `BackupAll`, keep its dated archive behavior; the
+three-way publish workflow is for a skill being changed, not a request to add every skill to the
+public portal.
+
 ## Local Conventions
 
 - Installed Codex skills live under `C:\Users\NNKIEH\.codex\skills\<skill-name>`.
@@ -95,3 +142,5 @@ After a run, report:
 - sync direction
 - whether validation passed
 - any files left unchanged because the script stopped safely
+- for a skill update, separate completion status for GitHub skill repo, portal `skill` listing,
+  installed local skill, and local portal copy
