@@ -1,6 +1,6 @@
 # Skill Sync Backup
 
-**Version:** 1.3.0
+**Version:** 1.3.1
 
 **Codex skill directory:** `C:\Users\NNKIEH\.codex\skills\skill-sync-backup`
 

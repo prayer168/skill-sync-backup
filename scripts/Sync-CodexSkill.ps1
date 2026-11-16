@@ -150,31 +150,38 @@ function New-LocalSkillArchive {
   New-Item -ItemType Directory -Force -Path $folder | Out-Null
   $target = Join-Path $folder "$name-local.zip"
   $pending = "$target.partial"
+  $staged = Join-Path ([System.IO.Path]::GetTempPath()) ("skill-archive-" + [Guid]::NewGuid().ToString("N") + ".zip")
   Add-Type -AssemblyName System.IO.Compression.FileSystem
   Add-Type -AssemblyName System.IO.Compression
-  $zip = [System.IO.Compression.ZipFile]::Open($pending, [System.IO.Compression.ZipArchiveMode]::Create)
   try {
-    foreach ($item in Get-ChildItem -LiteralPath $LocalSkillPath -Recurse -Force) {
-      $relative = $item.FullName.Substring($LocalSkillPath.Length + 1).Replace([char]92, [char]47)
-      if (-not $IncludeGit -and ($relative -eq ".git" -or $relative.StartsWith(".git/"))) { continue }
-      if ($item.PSIsContainer) {
-        $zip.CreateEntry("$relative/") | Out-Null
-      } else {
-        [System.IO.Compression.ZipFileExtensions]::CreateEntryFromFile(
-          $zip, $item.FullName, $relative, [System.IO.Compression.CompressionLevel]::Optimal
-        ) | Out-Null
+    $zip = [System.IO.Compression.ZipFile]::Open($staged, [System.IO.Compression.ZipArchiveMode]::Create)
+    try {
+      foreach ($item in Get-ChildItem -LiteralPath $LocalSkillPath -Recurse -Force) {
+        $relative = $item.FullName.Substring($LocalSkillPath.Length + 1).Replace([char]92, [char]47)
+        if (-not $IncludeGit -and ($relative -eq ".git" -or $relative.StartsWith(".git/"))) { continue }
+        if ($item.PSIsContainer) {
+          $zip.CreateEntry("$relative/") | Out-Null
+        } else {
+          [System.IO.Compression.ZipFileExtensions]::CreateEntryFromFile(
+            $zip, $item.FullName, $relative, [System.IO.Compression.CompressionLevel]::Optimal
+          ) | Out-Null
+        }
       }
+    } finally {
+      $zip.Dispose()
     }
+    $zip = [System.IO.Compression.ZipFile]::OpenRead($staged)
+    try {
+      if (-not $zip.GetEntry("SKILL.md")) { throw "Missing SKILL.md in the archive for $name." }
+    } finally {
+      $zip.Dispose()
+    }
+    Copy-Item -LiteralPath $staged -Destination $pending
+    Move-Item -LiteralPath $pending -Destination $target
   } finally {
-    $zip.Dispose()
+    if (Test-Path -LiteralPath $staged) { Remove-Item -LiteralPath $staged }
+    if (Test-Path -LiteralPath $pending) { Remove-Item -LiteralPath $pending }
   }
-  $zip = [System.IO.Compression.ZipFile]::OpenRead($pending)
-  try {
-    if (-not $zip.GetEntry("SKILL.md")) { throw "Missing SKILL.md in the archive for $name." }
-  } finally {
-    $zip.Dispose()
-  }
-  Move-Item -LiteralPath $pending -Destination $target
 }
 
 function Write-BackupReport {
