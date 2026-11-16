@@ -1,4 +1,4 @@
-param(
+﻿param(
   [string]$SkillName = "",
 
   [string]$Repo = "",
@@ -90,14 +90,7 @@ function Convert-ToSafeFolderName {
 }
 
 function Get-DefaultBackupRoots {
-  $encoded = @(
-    "Rzpc5oiR55qE6Zuy56uv56Gs56KfXDAwMDAwMDAwMGJhY2t1cFwwMDAwMDAwMDAw5pW45L2N5pWZ5p2QXHNraWxs",
-    "RDpc5oiR55qE6Zuy56uv56Gs56KfXDAwMDAwMDAwMGJhY2t1cFwwMDAwMDAwMDAw5pW45L2N5pWZ5p2QXHNraWxs"
-  )
-
-  return $encoded | ForEach-Object {
-    [System.Text.Encoding]::UTF8.GetString([System.Convert]::FromBase64String($_))
-  }
+  "G:\我的雲端硬碟\000000000backup\0000000000數位教材\skill"
 }
 
 function Get-BackupRoot {
@@ -121,6 +114,31 @@ function Get-BackupRoot {
   throw "No usable backup drive found. Checked: $($roots -join ', ')"
 }
 
+function Get-BackupTime {
+  [TimeZoneInfo]::ConvertTimeBySystemTimeZoneId([DateTimeOffset]::UtcNow, "Taipei Standard Time")
+}
+
+function New-TimestampedBackupDirectory {
+  param([string]$Prefix = "")
+
+  $root = Get-BackupRoot
+  $stamp = (Get-BackupTime).ToString("yyyy-MM-dd-HHmmss")
+  $baseName = "$Prefix$stamp"
+  $name = $baseName
+  $suffix = 1
+  while ($true) {
+    $destination = Join-Path $root $name
+    try {
+      $folder = New-Item -ItemType Directory -Path $destination -ErrorAction Stop
+      return $folder.FullName
+    } catch {
+      if (-not (Test-Path -LiteralPath $destination -PathType Container)) { throw }
+      $suffix++
+      $name = "$baseName-$suffix"
+    }
+  }
+}
+
 function New-SkillBackup {
   param([Parameter(Mandatory = $true)][string]$LocalSkillPath)
 
@@ -128,18 +146,11 @@ function New-SkillBackup {
     throw "Local skill does not exist, so there is nothing to back up: $LocalSkillPath"
   }
 
-  $root = Get-BackupRoot
-  $date = Get-Date -Format "yyyy-MM-dd"
-  $baseName = "$SkillName,$date"
-  $dest = Join-Path $root $baseName
-
-  if (Test-Path -LiteralPath $dest) {
-    $time = Get-Date -Format "HHmmss"
-    $dest = Join-Path $root "$baseName-$time"
+  $dest = New-TimestampedBackupDirectory -Prefix "$SkillName,"
+  Get-ChildItem -LiteralPath $LocalSkillPath -Force | ForEach-Object {
+    Copy-Item -LiteralPath $_.FullName -Destination $dest -Recurse -Force
   }
-
-  Copy-Item -LiteralPath $LocalSkillPath -Destination $dest -Recurse -Force
-  return (Resolve-FullPath $dest)
+  return $dest
 }
 
 function Write-BackupReport {
@@ -158,10 +169,10 @@ function Write-BackupReport {
     New-Item -ItemType Directory -Force -Path $ReportDirectory | Out-Null
   }
   $fullReportDirectory = Resolve-FullPath $ReportDirectory
-  $timestamp = Get-Date -Format "yyyy-MM-dd-HHmmss"
+  $timestamp = (Get-BackupTime).ToString("yyyy-MM-dd-HHmmss")
   $reportPath = Join-Path $fullReportDirectory "skill-backup-report_$timestamp.md"
   if (Test-Path -LiteralPath $reportPath) {
-    $timestamp = Get-Date -Format "yyyy-MM-dd-HHmmss-fff"
+    $timestamp = (Get-BackupTime).ToString("yyyy-MM-dd-HHmmss-fff")
     $reportPath = Join-Path $fullReportDirectory "skill-backup-report_$timestamp.md"
   }
   $reportFileName = Split-Path -Leaf $reportPath
@@ -175,7 +186,8 @@ function Write-BackupReport {
       $githubSkillLines.Add("- $skill")
     } elseif ($skill.repo) {
       $detail = if ($skill.skillPath) { " ($($skill.skillPath))" } else { "" }
-      $githubSkillLines.Add("- $($skill.repo)$detail")
+      $archiveDetail = if ($skill.archiveFile) { " | github/$($skill.archiveFile) | $($skill.commit)" } else { "" }
+      $githubSkillLines.Add("- $($skill.repo)$detail$archiveDetail")
     } elseif ($skill.name) {
       $githubSkillLines.Add("- $($skill.name)")
     } else {
@@ -220,7 +232,7 @@ function Write-BackupReport {
   }
   $content = Get-Content -LiteralPath $templatePath -Raw -Encoding UTF8
   $replacements = @{
-    "{{completed_at}}" = (Get-Date -Format "yyyy-MM-dd HH:mm:ss zzz")
+    "{{completed_at}}" = (Get-BackupTime).ToString("yyyy-MM-dd HH:mm:ss zzz")
     "{{report_directory}}" = $fullReportDirectory
     "{{report_filename}}" = $reportFileName
     "{{mode}}" = $modeLabel
@@ -270,25 +282,24 @@ function Get-GitHubSkillRepositories {
   $skillRepos = @()
 
   foreach ($repo in $repos) {
-    $branch = "main"
-    if ($repo.defaultBranchRef -and $repo.defaultBranchRef.name) {
-      $branch = $repo.defaultBranchRef.name
-    }
+    if (-not $repo.defaultBranchRef -or -not $repo.defaultBranchRef.name) { continue }
+    $branch = $repo.defaultBranchRef.name
 
     $oldErrorActionPreference = $ErrorActionPreference
     $ErrorActionPreference = "Continue"
     try {
-      $treeJson = & gh api "repos/$GitHubUser/$($repo.name)/git/trees/$branch`?recursive=1" 2>$null
+      $treeJson = & gh api "repos/$GitHubUser/$($repo.name)/git/trees/$([Uri]::EscapeDataString($branch))`?recursive=1" 2>$null
       $treeExitCode = $LASTEXITCODE
     } finally {
       $ErrorActionPreference = $oldErrorActionPreference
     }
 
     if ($treeExitCode -ne 0 -or -not $treeJson) {
-      continue
+      throw "Could not inspect the default branch of $GitHubUser/$($repo.name)."
     }
 
     $tree = $treeJson | ConvertFrom-Json
+    if ($tree.truncated) { throw "Incomplete GitHub tree: $($repo.name)" }
     $skillPaths = @(
       $tree.tree |
         Where-Object { $_.type -eq "blob" -and (Split-Path -Leaf $_.path) -eq "SKILL.md" } |
@@ -301,6 +312,7 @@ function Get-GitHubSkillRepositories {
         url = $repo.url
         branch = $branch
         skillPaths = $skillPaths
+        scannedObject = $tree.sha
       }
     }
   }
@@ -309,9 +321,9 @@ function Get-GitHubSkillRepositories {
 }
 
 function New-GitHubSkillsBackup {
-  param([Parameter(Mandatory = $true)][string]$DatedBackupPath)
+  param([Parameter(Mandatory = $true)][string]$SnapshotPath)
 
-  $githubDest = Join-Path $DatedBackupPath "github"
+  $githubDest = Join-Path $SnapshotPath "github"
   if (-not (Test-Path -LiteralPath $githubDest)) {
     New-Item -ItemType Directory -Force -Path $githubDest | Out-Null
   }
@@ -327,36 +339,44 @@ function New-GitHubSkillsBackup {
 
     try {
       $clonePath = Join-Path $tempRoot "repo"
-      Invoke-Git -Args @("clone", "--depth", "1", $repo.url, $clonePath)
+      Invoke-Git -Args @("clone", "--quiet", "--no-checkout", "--depth", "1", "--branch", $repo.branch, $repo.url, $clonePath)
+      $commit = & git -C $clonePath rev-parse HEAD
+      if ($LASTEXITCODE -ne 0) { throw "Could not read the commit for $($repo.name)." }
+      $tree = & git -C $clonePath rev-parse 'HEAD^{tree}'
+      if ($LASTEXITCODE -ne 0 -or $repo.scannedObject -notin @($commit, $tree)) {
+        throw "The default branch changed during discovery for $($repo.name)."
+      }
+
+      $entries = & git -C $clonePath ls-tree -r HEAD
+      if ($LASTEXITCODE -ne 0) { throw "Could not read the tracked entries for $($repo.name)." }
+      if (@($entries -match '^160000 ').Count -gt 0) {
+        throw "$($repo.name) contains Git submodules, which require a separate backup."
+      }
+
+      # Override export attributes so the ZIP contains every tracked file with its original contents.
+      $attributes = Join-Path $clonePath '.git/info/attributes'
+      Set-Content -LiteralPath $attributes -Encoding ASCII -Value '* -export-ignore -export-subst'
+      $archiveFile = "$(Convert-ToSafeFolderName -Name $repo.name).zip"
+      $target = Join-Path $fullGithubDest $archiveFile
+      $pending = "$target.partial"
+      Assert-UnderParent -Child $target -Parent $fullGithubDest -Purpose "GitHub repository archive"
+      Invoke-Git -Args @("-C", $clonePath, "archive", "--format=zip", "--output=$pending", $commit)
+      Add-Type -AssemblyName System.IO.Compression.FileSystem
+      $zip = [System.IO.Compression.ZipFile]::OpenRead($pending)
+      try {
+        $archivedFiles = @($zip.Entries | Where-Object { -not $_.FullName.EndsWith('/') })
+        if ($archivedFiles.Count -ne $entries.Count) {
+          throw "ZIP file count differs from the Git tree for $($repo.name)."
+        }
+      } finally {
+        $zip.Dispose()
+      }
+      Move-Item -LiteralPath $pending -Destination $target
 
       foreach ($skillPath in $repo.skillPaths) {
-        $relativeSkillRoot = Split-Path -Parent $skillPath
-        if ([string]::IsNullOrWhiteSpace($relativeSkillRoot)) {
-          $source = $clonePath
-          $targetName = Convert-ToSafeFolderName -Name $repo.name
-        } else {
-          $source = Join-Path $clonePath $relativeSkillRoot
-          $targetName = Convert-ToSafeFolderName -Name ($repo.name + "--" + ($relativeSkillRoot -replace '[\\/]', '-'))
-        }
-
-        Assert-UnderParent -Child $source -Parent $clonePath -Purpose "GitHub skill backup"
-        $target = Join-Path $fullGithubDest $targetName
-        if (Test-Path -LiteralPath $target) {
-          Assert-UnderParent -Child $target -Parent $fullGithubDest -Purpose "GitHub dated backup refresh"
-          Remove-Item -LiteralPath $target -Recurse -Force
-        }
-
-        Copy-SkillContents -Source $source -Destination $target
-        $copied += [PSCustomObject]@{
-          repo = $repo.name
-          skillPath = $skillPath
-          backupFolder = $targetName
-        }
-        $script:GitHubBackupProgress += [PSCustomObject]@{
-          repo = $repo.name
-          skillPath = $skillPath
-          backupFolder = $targetName
-        }
+        $entry = [PSCustomObject]@{ repo = $repo.name; skillPath = $skillPath; archiveFile = $archiveFile; commit = $commit }
+        $copied += $entry
+        $script:GitHubBackupProgress += $entry
       }
     } finally {
       if (Test-Path -LiteralPath $tempRoot) {
@@ -368,32 +388,22 @@ function New-GitHubSkillsBackup {
 
   return [PSCustomObject]@{
     backupPath = $fullGithubDest
+    repositoryCount = @($copied.repo | Sort-Object -Unique).Count
     skillCount = $copied.Count
     skills = $copied
   }
 }
 
 function New-AllSkillsBackup {
-  $root = Get-BackupRoot
-  $date = Get-Date -Format "yyyy-MM-dd"
-  $dest = Join-Path $root $date
-
-  if (-not (Test-Path -LiteralPath $dest)) {
-    New-Item -ItemType Directory -Force -Path $dest | Out-Null
-  }
+  $dest = New-TimestampedBackupDirectory
 
   $fullDest = Resolve-FullPath $dest
   $skills = Get-ChildItem -LiteralPath $codexRoot -Directory -Force |
-    Where-Object { $_.Name -ne ".git" }
+    Where-Object { $_.Name -ne ".system" -and (Test-Path -LiteralPath (Join-Path $_.FullName "SKILL.md") -PathType Leaf) }
 
   $copied = @()
   foreach ($skill in $skills) {
     $target = Join-Path $fullDest $skill.Name
-    if (Test-Path -LiteralPath $target) {
-      Assert-UnderParent -Child $target -Parent $fullDest -Purpose "dated backup refresh"
-      Remove-Item -LiteralPath $target -Recurse -Force
-    }
-
     Copy-SkillContents -Source $skill.FullName -Destination $target
     $copied += $skill.Name
   }
@@ -402,7 +412,7 @@ function New-AllSkillsBackup {
   $errors = @()
   if (-not $SkipGitHub) {
     try {
-      $github = New-GitHubSkillsBackup -DatedBackupPath $fullDest
+      $github = New-GitHubSkillsBackup -SnapshotPath $fullDest
     } catch {
       $errors += $_.Exception.Message
     }
@@ -512,15 +522,10 @@ if ($Mode -eq "BackupAll") {
 }
 
 if ($Mode -eq "BackupGitHub") {
-  $root = Get-BackupRoot
-  $date = Get-Date -Format "yyyy-MM-dd"
-  $dest = Join-Path $root $date
-  if (-not (Test-Path -LiteralPath $dest)) {
-    New-Item -ItemType Directory -Force -Path $dest | Out-Null
-  }
+  $dest = New-TimestampedBackupDirectory
   $fullDest = Resolve-FullPath $dest
   try {
-    $result = New-GitHubSkillsBackup -DatedBackupPath $fullDest
+    $result = New-GitHubSkillsBackup -SnapshotPath $fullDest
     $reportPath = Write-BackupReport -Mode "BackupGitHub" -BackupPath $fullDest -ReportDirectory $fullDest `
       -GitHubSkills @($result.skills) -LastCompletedStep "GitHub skill repositories copied into dated backup"
   } catch {
@@ -576,9 +581,8 @@ if ($Mode -eq "Status") {
 $backupPath = $null
 if (Test-Path -LiteralPath $localSkillPath) {
   $backupPath = New-SkillBackup -LocalSkillPath $localSkillPath
-  $backupRoot = Split-Path -Parent $backupPath
   $reportMode = if ($Mode -eq "Backup") { $Mode } else { "SafetyBackupBefore$Mode" }
-  $reportPath = Write-BackupReport -Mode $reportMode -BackupPath $backupPath -ReportDirectory (Join-Path $backupRoot "reports") `
+  $reportPath = Write-BackupReport -Mode $reportMode -BackupPath $backupPath -ReportDirectory $backupPath `
     -LocalSkills @($SkillName) -Status "Completed" -LastCompletedStep "Local skill backup copied successfully"
 }
 

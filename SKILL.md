@@ -1,6 +1,7 @@
 ---
 name: skill-sync-backup
-version: 1.1.0
+metadata:
+  version: 1.2.0
 description: >-
   Synchronize Codex skills installed on this computer with the user's GitHub skill repositories,
   search the user's GitHub account for skill repositories, and back up both installed and
@@ -65,24 +66,14 @@ public portal.
 ## Local Conventions
 
 - Installed Codex skills live under `C:\Users\NNKIEH\.codex\skills\<skill-name>`.
-- Backup destination is the first usable path below:
-  - `G:\我的雲端硬碟\000000000backup\0000000000數位教材\skill`
-  - `D:\我的雲端硬碟\000000000backup\0000000000數位教材\skill`
-- When the user says "備份技能" without naming one skill, create a date folder under the backup root: `YYYY-MM-DD`.
-  Put the latest installed Codex skill folders inside that date folder, then search GitHub for skill repos and
-  place their current contents under `YYYY-MM-DD\github\<repo-name>`.
-- A GitHub repo counts as a skill repo when its default branch contains at least one `SKILL.md`.
-  If a repo has nested skills, store each one as `<repo-name>--<nested-path>`.
+- The default backup root is `G:\我的雲端硬碟\000000000backup\0000000000數位教材\skill`.
+- Each `BackupAll` or `BackupGitHub` run creates a new `YYYY-MM-DD-HHmmss` folder in Taipei time. Single-skill and pre-sync backups use `<skill-name>,YYYY-MM-DD-HHmmss`. If two runs start in the same second, append a numeric suffix.
+- `BackupAll` copies the installed skills into the snapshot folder. Both GitHub backup modes save one `github/<repo-name>.zip` per repository, including every tracked file on the verified default-branch commit. Nested skills retain their original paths inside the ZIP. The archive represents the source snapshot at that commit.
+- A GitHub repo qualifies when its default branch contains a `SKILL.md`. Record all matching paths, the ZIP filename, and the commit in the report.
 - GitHub search defaults to likely skill repos based on repo name, description, and installed local skill names,
   then verifies each candidate by checking for `SKILL.md`. Use `-ScanAllGitHubRepos` only when a full account scan is needed.
-- Single-skill safety backups used before `Pull` or `Push` keep the older naming pattern:
-  `<skill-name>,YYYY-MM-DD`. If today's single-skill backup already exists, append the time:
-  `<skill-name>,YYYY-MM-DD-HHmmss`.
-- Every backup operation must create a Markdown overall report, including full, GitHub-only,
-  single-skill, and automatic pre-sync safety backups. The report is named
-  `skill-backup-report_YYYY-MM-DD-HHmmss.md`; bulk reports live in that dated backup folder and
-  single-skill safety reports live under `<backup-root>\reports`. The report format is maintained
-  in `templates/backup-report.md` and populated by `scripts/Sync-CodexSkill.ps1`.
+- Every backup operation creates a Traditional Chinese Markdown report named
+  `skill-backup-report_YYYY-MM-DD-HHmmss.md` inside its snapshot folder. The report format is maintained in `templates/backup-report.md` and populated by `scripts/Sync-CodexSkill.ps1`.
 - Write every overall report in Traditional Chinese. Explicitly state (1) the folder containing
   the report, (2) the report filename, and (3) the backed-up skill list, separated into installed
   local skills and GitHub skills. Preserve counts, mode, status, backup destination, last completed
@@ -110,7 +101,7 @@ Before mutating either side:
 ## Automation Alignment Controls
 
 - `Status`, `Backup`, and `BackupAll` are safe low-supervision modes when paths are valid. `Pull` and `Push` are mutation modes and must preserve the automatic backup and path-boundary checks in the script.
-- `BackupAll` must first create or reuse the date folder directly under the backup root, then refresh each skill folder inside it from `C:\Users\NNKIEH\.codex\skills`, then refresh the `github` subfolder from skill repos discovered under the configured GitHub owner.
+- `BackupAll` must first create a unique timestamped folder under the backup root, copy installed skill folders into it, and archive the discovered GitHub repositories in its `github` subfolder.
 - GitHub discovery uses `gh repo list <owner>` plus default-branch tree inspection for `SKILL.md`. Clone only repos confirmed to contain a skill file. Prefer the default fast candidate search; use `-ScanAllGitHubRepos` for exhaustive but slower discovery.
 - Never bypass `-Force` for `Push`; it is the human checkpoint that confirms the installed Codex copy should overwrite GitHub content.
 - If backup creation, repo reachability, clone, validation, copy, commit, or push fails, stop with the backup path and last completed step. Do not retry destructive copy operations with a different inferred path.

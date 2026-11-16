@@ -1,6 +1,6 @@
 # Skill Sync Backup
 
-**Version:** 1.1.0
+**Version:** 1.2.0
 
 **Codex skill directory:** `C:\Users\NNKIEH\.codex\skills\skill-sync-backup`
 
@@ -12,9 +12,8 @@ Synchronize locally installed Codex skills with GitHub repositories and create d
 
 - Windows PowerShell and Git
 - GitHub CLI (`gh`) authenticated for repository discovery and GitHub operations
-- Access to one configured backup root:
+- Access to the default backup root:
   - `G:\我的雲端硬碟\000000000backup\0000000000數位教材\skill`
-  - `D:\我的雲端硬碟\000000000backup\0000000000數位教材\skill`
 
 ## Usage
 
@@ -31,11 +30,11 @@ powershell -ExecutionPolicy Bypass -File $script -SkillName "skill-sync-backup" 
 powershell -ExecutionPolicy Bypass -File $script -Mode Status
 ```
 
-These commands respectively back up installed and GitHub skills, back up GitHub-hosted skills only, create a single-skill safety backup, pull or push a skill, and inspect status. `Push` requires `-Force` as an explicit confirmation. `BackupAll` creates or refreshes a `YYYY-MM-DD` folder containing local skills and a `github` subfolder. The default GitHub discovery checks likely skill repositories; add `-ScanAllGitHubRepos` for a full account scan.
+These commands respectively back up installed and GitHub skills, back up GitHub-hosted skills only, create a single-skill safety backup, pull or push a skill, and inspect status. `Push` requires `-Force` as an explicit confirmation. Each backup creates its own Taipei-time folder, using `YYYY-MM-DD-HHmmss` for bulk backups or `<skill-name>,YYYY-MM-DD-HHmmss` for single-skill backups. GitHub backups save one `github/<repo-name>.zip` per repository with every tracked path from its default-branch commit. The default GitHub discovery checks likely skill repositories; add `-ScanAllGitHubRepos` for a full account scan.
 
 ## Backup reports
 
-Every backup run—including the automatic safety backup before `Pull` or `Push`—produces a Markdown overall report in Traditional Chinese named `skill-backup-report_YYYY-MM-DD-HHmmss.md`. Bulk reports are stored in that day's backup folder; single-skill safety reports are stored under `<backup-root>\reports`. Each report explicitly gives its folder and filename and lists all backed-up skills, separating installed local skills from GitHub skills (`無` when a list is empty). It also includes status, backup path, counts, last completed step, and errors. A partial or failed operation must not be described as complete. The final response must likewise give the report folder, filename, and skill list in Chinese.
+Every backup run—including the automatic safety backup before `Pull` or `Push`—produces a Markdown overall report in Traditional Chinese named `skill-backup-report_YYYY-MM-DD-HHmmss.md`. Each report is stored inside its timestamped snapshot folder. Each report explicitly gives its folder and filename and lists all backed-up skills, separating installed local skills from GitHub skills (`無` when a list is empty). It also includes status, backup path, counts, last completed step, and errors. A partial or failed operation must not be described as complete. The final response must likewise give the report folder, filename, and skill list in Chinese.
 
 ## Publishing a skill update
 
