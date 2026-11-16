@@ -1,7 +1,7 @@
 ---
 name: skill-sync-backup
 metadata:
-  version: 1.2.0
+  version: 1.2.1
 description: >-
   Synchronize Codex skills installed on this computer with the user's GitHub skill repositories,
   search the user's GitHub account for skill repositories, and back up both installed and

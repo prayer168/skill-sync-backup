@@ -355,12 +355,12 @@ function New-GitHubSkillsBackup {
 
       # Override export attributes so the ZIP contains every tracked file with its original contents.
       $attributes = Join-Path $clonePath '.git/info/attributes'
-      Set-Content -LiteralPath $attributes -Encoding ASCII -Value '* -export-ignore -export-subst'
+      Set-Content -LiteralPath $attributes -Encoding ASCII -Value '* -export-ignore -export-subst -text -eol -crlf -ident -filter -working-tree-encoding'
       $archiveFile = "$(Convert-ToSafeFolderName -Name $repo.name).zip"
       $target = Join-Path $fullGithubDest $archiveFile
       $pending = "$target.partial"
       Assert-UnderParent -Child $target -Parent $fullGithubDest -Purpose "GitHub repository archive"
-      Invoke-Git -Args @("-C", $clonePath, "archive", "--format=zip", "--output=$pending", $commit)
+      Invoke-Git -Args @("-C", $clonePath, "-c", "core.autocrlf=false", "archive", "--format=zip", "--output=$pending", $commit)
       Add-Type -AssemblyName System.IO.Compression.FileSystem
       $zip = [System.IO.Compression.ZipFile]::OpenRead($pending)
       try {
