@@ -1,7 +1,7 @@
 ---
 name: skill-sync-backup
 metadata:
-  version: 1.3.1
+  version: 1.4.0
 description: >-
   Synchronize Codex skills installed on this computer with the user's GitHub skill repositories,
   search the user's GitHub account for skill repositories, and back up both installed and
@@ -140,6 +140,13 @@ powershell -ExecutionPolicy Bypass -File "C:\Users\NNKIEH\.codex\skills\skill-sy
 ```
 
 Use `-Mode Push` only when the user explicitly wants the installed Codex copy to become the GitHub version.
+
+## skill-sync Integration
+
+- After a successful `-Mode Push -Force`, the script adds the skill to `~/skill-sync/skills.json` (target `~/.codex/skills/<name>`) if it is not listed yet, then commits and pushes skill-sync, so every computer running the SkillSync task pulls it. The result appears as `skillSyncRegistration` in the output JSON. Use `-SkipSkillSyncRegister` to turn this off.
+- Registration is skipped (with a reason) when SKILL.md is not at the repo root, `~/skill-sync` is missing, or it has uncommitted changes. A failure here never fails the Push.
+- Pull mode is for one-off manual use; daily sync across computers is skill-sync's job.
+- Backup roles: local `skill_backups/` folders hold short-term copies made before an overwrite; the G: drive ZIPs are the long-term archive.
 
 ## Reporting
 

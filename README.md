@@ -1,6 +1,6 @@
 # Skill Sync Backup
 
-**Version:** 1.3.1
+**Version:** 1.4.0
 
 **Codex skill directory:** `C:\Users\NNKIEH\.codex\skills\skill-sync-backup`
 
@@ -31,6 +31,13 @@ powershell -ExecutionPolicy Bypass -File $script -Mode Status
 ```
 
 These commands respectively back up installed and GitHub skills, back up GitHub-hosted skills only, create a single-skill safety backup, pull or push a skill, and inspect status. `Push` requires `-Force` as an explicit confirmation. Each run creates a new Taipei-time `YYYY-MM-DD-HHmmss` folder under the backup root. Inside it, each skill package has its own folder. Local packages use `<skill-name>/<skill-name>-local.zip`. GitHub packages use `<repo-name>/<repo-name>-github.zip` and preserve every tracked path in the default-branch commit, including nested skills. Matching names place both ZIPs in the same folder. The default GitHub discovery checks likely skill repositories; add `-ScanAllGitHubRepos` for a full account scan.
+
+## skill-sync Integration
+
+- After a successful `-Mode Push -Force`, the script adds the skill to `~/skill-sync/skills.json` (target `~/.codex/skills/<name>`) if it is not listed yet, then commits and pushes skill-sync, so every computer running the SkillSync task pulls it. The result appears as `skillSyncRegistration` in the output JSON. Use `-SkipSkillSyncRegister` to turn this off.
+- Registration is skipped (with a reason) when SKILL.md is not at the repo root, `~/skill-sync` is missing, or it has uncommitted changes. A failure here never fails the Push.
+- Pull mode is for one-off manual use; daily sync across computers is skill-sync's job.
+- Backup roles: local `skill_backups/` folders hold short-term copies made before an overwrite; the G: drive ZIPs are the long-term archive.
 
 ## Backup reports
 

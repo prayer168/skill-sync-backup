@@ -18,6 +18,10 @@
 
   [switch]$ScanAllGitHubRepos,
 
+  [string]$SkillSyncDir = (Join-Path $env:USERPROFILE "skill-sync"),
+
+  [switch]$SkipSkillSyncRegister,
+
   [switch]$Force
 )
 
@@ -484,6 +488,103 @@ function Get-RepoUrl {
   return "https://github.com/$GitHubUser/$SkillName.git"
 }
 
+function Get-RepoKey {
+  param([string]$Url)
+  $key = "$Url".Trim().ToLowerInvariant() -replace '^git@github\.com:', 'github.com/' -replace '^https?://', ''
+  ($key -replace '\.git$', '').TrimEnd('/')
+}
+
+function Format-JsonText {
+  # Re-indent compressed JSON with 2 spaces (PowerShell 5.1 ConvertTo-Json output is hard to read).
+  param([Parameter(Mandatory = $true)][string]$Json)
+  $sb = New-Object System.Text.StringBuilder
+  $indent = 0
+  $inString = $false
+  $escape = $false
+  for ($i = 0; $i -lt $Json.Length; $i++) {
+    $ch = $Json[$i]
+    if ($inString) {
+      [void]$sb.Append($ch)
+      if ($escape) { $escape = $false }
+      elseif ($ch -eq '\') { $escape = $true }
+      elseif ($ch -eq '"') { $inString = $false }
+      continue
+    }
+    if ($ch -eq '"') { $inString = $true; [void]$sb.Append($ch) }
+    elseif ($ch -eq '{' -or $ch -eq '[') {
+      $next = if ($i + 1 -lt $Json.Length) { $Json[$i + 1] } else { ' ' }
+      if (($ch -eq '{' -and $next -eq '}') -or ($ch -eq '[' -and $next -eq ']')) {
+        [void]$sb.Append($ch).Append($next)
+        $i++
+      } else {
+        $indent++
+        [void]$sb.Append($ch).Append("`n").Append('  ' * $indent)
+      }
+    }
+    elseif ($ch -eq '}' -or $ch -eq ']') {
+      $indent--
+      [void]$sb.Append("`n").Append('  ' * $indent).Append($ch)
+    }
+    elseif ($ch -eq ',') { [void]$sb.Append(",`n").Append('  ' * $indent) }
+    elseif ($ch -eq ':') { [void]$sb.Append(': ') }
+    else { [void]$sb.Append($ch) }
+  }
+  $sb.ToString() + "`n"
+}
+
+function Register-SkillSyncEntry {
+  # After a successful Push, list the skill in skill-sync's skills.json so every computer
+  # running the SkillSync scheduled task pulls it. Never throws: the push already succeeded.
+  param(
+    [Parameter(Mandatory = $true)][string]$Name,
+    [Parameter(Mandatory = $true)][string]$RepoUrl,
+    [Parameter(Mandatory = $true)][bool]$SkillAtRepoRoot
+  )
+  $ErrorActionPreference = "Continue"
+  try {
+    if (-not $SkillAtRepoRoot) {
+      return "skipped: SKILL.md is not at the repo root, so skill-sync cannot clone the repo as one skill folder; add it to skills.json by hand"
+    }
+    if (-not (Test-Path -LiteralPath (Join-Path $SkillSyncDir ".git"))) {
+      return "skipped: no skill-sync clone at $SkillSyncDir"
+    }
+    $config = Join-Path $SkillSyncDir "skills.json"
+    $dirty = & git -C $SkillSyncDir status --porcelain
+    if ($dirty) {
+      return "skipped: $SkillSyncDir has uncommitted changes; commit or stash them, then add the skill by hand"
+    }
+    & git -C $SkillSyncDir pull --ff-only -q 2>&1 | Out-Null
+    if ($LASTEXITCODE -ne 0) { return "skipped: git pull --ff-only failed in $SkillSyncDir" }
+
+    $cfg = Get-Content -LiteralPath $config -Raw -Encoding UTF8 | ConvertFrom-Json
+    $key = Get-RepoKey $RepoUrl
+    foreach ($existing in @($cfg.skills)) {
+      if ($existing -and (Get-RepoKey $existing.repo) -eq $key) {
+        return "already listed in skills.json as '$($existing.name)'"
+      }
+    }
+
+    $entry = [pscustomobject]@{
+      name    = $Name
+      repo    = $RepoUrl
+      targets = @("~/.codex/skills/$Name")
+      copies  = @()
+    }
+    $cfg.skills = @(@($cfg.skills) | Where-Object { $_ }) + $entry
+    $text = Format-JsonText -Json ($cfg | ConvertTo-Json -Depth 10 -Compress)
+    [System.IO.File]::WriteAllText($config, $text, (New-Object System.Text.UTF8Encoding($false)))
+
+    & git -C $SkillSyncDir add skills.json 2>&1 | Out-Null
+    & git -C $SkillSyncDir commit -q -m "Register $Name (added by skill-sync-backup Push)" 2>&1 | Out-Null
+    if ($LASTEXITCODE -ne 0) { return "failed: skills.json was edited but git commit failed in $SkillSyncDir" }
+    & git -C $SkillSyncDir push -q 2>&1 | Out-Null
+    if ($LASTEXITCODE -ne 0) { return "partial: committed to $SkillSyncDir but git push failed; run git push there" }
+    return "registered in skills.json (target ~/.codex/skills/$Name) and pushed"
+  } catch {
+    return "failed: $($_.Exception.Message)"
+  }
+}
+
 function Get-RemoteSkillRoot {
   param([Parameter(Mandatory = $true)][string]$ClonePath)
 
@@ -686,10 +787,16 @@ try {
       $status = git status --porcelain
       if ($status) {
         git commit -m "Update $SkillName from Codex local copy"
+        if ($LASTEXITCODE -ne 0) { throw "git commit failed. Backup was created at $backupPath." }
         git push
+        if ($LASTEXITCODE -ne 0) { throw "git push failed. Backup was created at $backupPath." }
       }
     } finally {
       Pop-Location
+    }
+
+    $skillSyncRegistration = if ($SkipSkillSyncRegister) { "skipped: -SkipSkillSyncRegister" } else {
+      Register-SkillSyncEntry -Name $SkillName -RepoUrl $repoUrl -SkillAtRepoRoot ($remoteSkillRoot -eq $clonePath)
     }
 
     [PSCustomObject]@{
@@ -700,6 +807,7 @@ try {
       backupPath = $backupPath
       reportPath = $reportPath
       pushedChanges = [bool]$status
+      skillSyncRegistration = $skillSyncRegistration
     } | ConvertTo-Json -Depth 4
     exit 0
   }
