@@ -1,6 +1,6 @@
 # Skill Sync Backup
 
-**Version:** 1.2.1
+**Version:** 1.3.0
 
 **Codex skill directory:** `C:\Users\NNKIEH\.codex\skills\skill-sync-backup`
 
@@ -30,7 +30,7 @@ powershell -ExecutionPolicy Bypass -File $script -SkillName "skill-sync-backup" 
 powershell -ExecutionPolicy Bypass -File $script -Mode Status
 ```
 
-These commands respectively back up installed and GitHub skills, back up GitHub-hosted skills only, create a single-skill safety backup, pull or push a skill, and inspect status. `Push` requires `-Force` as an explicit confirmation. Each backup creates its own Taipei-time folder, using `YYYY-MM-DD-HHmmss` for bulk backups or `<skill-name>,YYYY-MM-DD-HHmmss` for single-skill backups. GitHub backups save one `github/<repo-name>.zip` per repository with every tracked path from its default-branch commit. The default GitHub discovery checks likely skill repositories; add `-ScanAllGitHubRepos` for a full account scan.
+These commands respectively back up installed and GitHub skills, back up GitHub-hosted skills only, create a single-skill safety backup, pull or push a skill, and inspect status. `Push` requires `-Force` as an explicit confirmation. Each run creates a new Taipei-time `YYYY-MM-DD-HHmmss` folder under the backup root. Inside it, each skill package has its own folder. Local packages use `<skill-name>/<skill-name>-local.zip`. GitHub packages use `<repo-name>/<repo-name>-github.zip` and preserve every tracked path in the default-branch commit, including nested skills. Matching names place both ZIPs in the same folder. The default GitHub discovery checks likely skill repositories; add `-ScanAllGitHubRepos` for a full account scan.
 
 ## Backup reports
 

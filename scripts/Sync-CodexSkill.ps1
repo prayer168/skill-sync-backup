@@ -119,11 +119,9 @@ function Get-BackupTime {
 }
 
 function New-TimestampedBackupDirectory {
-  param([string]$Prefix = "")
-
   $root = Get-BackupRoot
   $stamp = (Get-BackupTime).ToString("yyyy-MM-dd-HHmmss")
-  $baseName = "$Prefix$stamp"
+  $baseName = $stamp
   $name = $baseName
   $suffix = 1
   while ($true) {
@@ -139,18 +137,44 @@ function New-TimestampedBackupDirectory {
   }
 }
 
-function New-SkillBackup {
-  param([Parameter(Mandatory = $true)][string]$LocalSkillPath)
+function New-LocalSkillArchive {
+  param(
+    [Parameter(Mandatory = $true)][string]$LocalSkillPath,
+    [Parameter(Mandatory = $true)][string]$SnapshotPath,
+    [switch]$IncludeGit
+  )
 
-  if (-not (Test-Path -LiteralPath $LocalSkillPath)) {
-    throw "Local skill does not exist, so there is nothing to back up: $LocalSkillPath"
+  $name = Split-Path -Leaf $LocalSkillPath
+  $folder = Join-Path $SnapshotPath $name
+  Assert-UnderDirectory -Child $folder -Parent $SnapshotPath
+  New-Item -ItemType Directory -Force -Path $folder | Out-Null
+  $target = Join-Path $folder "$name-local.zip"
+  $pending = "$target.partial"
+  Add-Type -AssemblyName System.IO.Compression.FileSystem
+  Add-Type -AssemblyName System.IO.Compression
+  $zip = [System.IO.Compression.ZipFile]::Open($pending, [System.IO.Compression.ZipArchiveMode]::Create)
+  try {
+    foreach ($item in Get-ChildItem -LiteralPath $LocalSkillPath -Recurse -Force) {
+      $relative = $item.FullName.Substring($LocalSkillPath.Length + 1).Replace([char]92, [char]47)
+      if (-not $IncludeGit -and ($relative -eq ".git" -or $relative.StartsWith(".git/"))) { continue }
+      if ($item.PSIsContainer) {
+        $zip.CreateEntry("$relative/") | Out-Null
+      } else {
+        [System.IO.Compression.ZipFileExtensions]::CreateEntryFromFile(
+          $zip, $item.FullName, $relative, [System.IO.Compression.CompressionLevel]::Optimal
+        ) | Out-Null
+      }
+    }
+  } finally {
+    $zip.Dispose()
   }
-
-  $dest = New-TimestampedBackupDirectory -Prefix "$SkillName,"
-  Get-ChildItem -LiteralPath $LocalSkillPath -Force | ForEach-Object {
-    Copy-Item -LiteralPath $_.FullName -Destination $dest -Recurse -Force
+  $zip = [System.IO.Compression.ZipFile]::OpenRead($pending)
+  try {
+    if (-not $zip.GetEntry("SKILL.md")) { throw "Missing SKILL.md in the archive for $name." }
+  } finally {
+    $zip.Dispose()
   }
-  return $dest
+  Move-Item -LiteralPath $pending -Destination $target
 }
 
 function Write-BackupReport {
@@ -178,7 +202,7 @@ function Write-BackupReport {
   $reportFileName = Split-Path -Leaf $reportPath
 
   $localSkillLines = if ($LocalSkills.Count -eq 0) { "- $([char]0x7121)" } else {
-    (@($LocalSkills | ForEach-Object { "- $_" }) -join "`n")
+    (@($LocalSkills | ForEach-Object { "- $_ ($_/$_-local.zip)" }) -join "`n")
   }
   $githubSkillLines = [System.Collections.Generic.List[string]]::new()
   foreach ($skill in $GitHubSkills) {
@@ -186,7 +210,7 @@ function Write-BackupReport {
       $githubSkillLines.Add("- $skill")
     } elseif ($skill.repo) {
       $detail = if ($skill.skillPath) { " ($($skill.skillPath))" } else { "" }
-      $archiveDetail = if ($skill.archiveFile) { " | github/$($skill.archiveFile) | $($skill.commit)" } else { "" }
+      $archiveDetail = if ($skill.archiveFile) { " | $($skill.archiveFile) | $($skill.commit)" } else { "" }
       $githubSkillLines.Add("- $($skill.repo)$detail$archiveDetail")
     } elseif ($skill.name) {
       $githubSkillLines.Add("- $($skill.name)")
@@ -323,12 +347,6 @@ function Get-GitHubSkillRepositories {
 function New-GitHubSkillsBackup {
   param([Parameter(Mandatory = $true)][string]$SnapshotPath)
 
-  $githubDest = Join-Path $SnapshotPath "github"
-  if (-not (Test-Path -LiteralPath $githubDest)) {
-    New-Item -ItemType Directory -Force -Path $githubDest | Out-Null
-  }
-  $fullGithubDest = Resolve-FullPath $githubDest
-
   $script:GitHubBackupProgress = @()
   $skillRepos = Get-GitHubSkillRepositories
   $copied = @()
@@ -356,10 +374,14 @@ function New-GitHubSkillsBackup {
       # Override export attributes so the ZIP contains every tracked file with its original contents.
       $attributes = Join-Path $clonePath '.git/info/attributes'
       Set-Content -LiteralPath $attributes -Encoding ASCII -Value '* -export-ignore -export-subst -text -eol -crlf -ident -filter -working-tree-encoding'
-      $archiveFile = "$(Convert-ToSafeFolderName -Name $repo.name).zip"
-      $target = Join-Path $fullGithubDest $archiveFile
+      $name = Convert-ToSafeFolderName -Name $repo.name
+      $folder = Join-Path $SnapshotPath $name
+      Assert-UnderDirectory -Child $folder -Parent $SnapshotPath
+      New-Item -ItemType Directory -Force -Path $folder | Out-Null
+      $archiveFile = "$name/$name-github.zip"
+      $target = Join-Path $folder "$name-github.zip"
       $pending = "$target.partial"
-      Assert-UnderParent -Child $target -Parent $fullGithubDest -Purpose "GitHub repository archive"
+      Assert-UnderDirectory -Child $target -Parent $folder
       Invoke-Git -Args @("-C", $clonePath, "-c", "core.autocrlf=false", "archive", "--format=zip", "--output=$pending", $commit)
       Add-Type -AssemblyName System.IO.Compression.FileSystem
       $zip = [System.IO.Compression.ZipFile]::OpenRead($pending)
@@ -387,7 +409,7 @@ function New-GitHubSkillsBackup {
   }
 
   return [PSCustomObject]@{
-    backupPath = $fullGithubDest
+    backupPath = $SnapshotPath
     repositoryCount = @($copied.repo | Sort-Object -Unique).Count
     skillCount = $copied.Count
     skills = $copied
@@ -403,8 +425,7 @@ function New-AllSkillsBackup {
 
   $copied = @()
   foreach ($skill in $skills) {
-    $target = Join-Path $fullDest $skill.Name
-    Copy-SkillContents -Source $skill.FullName -Destination $target
+    New-LocalSkillArchive -LocalSkillPath $skill.FullName -SnapshotPath $fullDest
     $copied += $skill.Name
   }
 
@@ -530,7 +551,6 @@ if ($Mode -eq "BackupGitHub") {
       -GitHubSkills @($result.skills) -LastCompletedStep "GitHub skill repositories copied into dated backup"
   } catch {
     $partialSkills = @($script:GitHubBackupProgress)
-    $githubDest = Join-Path $fullDest "github"
     $reportPath = Write-BackupReport -Mode "BackupGitHub" -BackupPath $fullDest -ReportDirectory $fullDest `
       -GitHubSkills $partialSkills -Status "Failed" -ErrorMessage $_.Exception.Message `
       -LastCompletedStep "GitHub backup stopped; see issue details"
@@ -538,7 +558,7 @@ if ($Mode -eq "BackupGitHub") {
       mode = $Mode
       backupPath = $fullDest
       githubSkillCount = $partialSkills.Count
-      githubBackupPath = $githubDest
+      githubBackupPath = $fullDest
       githubSkills = $partialSkills
       reportPath = $reportPath
       status = "Failed"
@@ -580,7 +600,8 @@ if ($Mode -eq "Status") {
 
 $backupPath = $null
 if (Test-Path -LiteralPath $localSkillPath) {
-  $backupPath = New-SkillBackup -LocalSkillPath $localSkillPath
+  $backupPath = New-TimestampedBackupDirectory
+  New-LocalSkillArchive -LocalSkillPath $localSkillPath -SnapshotPath $backupPath -IncludeGit
   $reportMode = if ($Mode -eq "Backup") { $Mode } else { "SafetyBackupBefore$Mode" }
   $reportPath = Write-BackupReport -Mode $reportMode -BackupPath $backupPath -ReportDirectory $backupPath `
     -LocalSkills @($SkillName) -Status "Completed" -LastCompletedStep "Local skill backup copied successfully"
